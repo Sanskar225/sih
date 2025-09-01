@@ -10,6 +10,460 @@ generator client {
 }
 
 datasource db {
-  provider = "mongodb"
+provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+enum UserRole {
+  AUTHORITY
+  LINEMAN
+  PUBLIC
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum AlertStatus {
+  PENDING
+  UNDER_REVIEW
+  CONFIRMED
+  DISMISSED
+  RESOLVED
+  REOPENED
+}
+
+enum AlertSeverity {
+  CRITICAL    // Live wire down, fire risk
+  HIGH        // Major outage, public safety risk
+  MEDIUM      // Partial outage, equipment damage
+  LOW         // Minor issue, maintenance needed
+}
+
+enum TicketStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  AWAITING_PARTS
+  RESOLVED
+  CANCELLED
+  REOPENED
+}
+
+enum TicketPriority {
+  URGENT    // 1-2 hour response
+  HIGH      // 4-6 hour response
+  MEDIUM    // 12-24 hour response
+  LOW       // 48+ hour response
+}
+
+enum DeviceType {
+  VOLTAGE_SENSOR
+  CURRENT_SENSOR
+  VIBRATION_SENSOR
+  TILT_SENSOR
+  TEMPERATURE_SENSOR
+  CAMERA
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  MAINTENANCE
+  FAULTY
+  DECOMMISSIONED
+}
+
+enum NotificationType {
+  ALERT_CREATED
+  TICKET_ASSIGNED
+  TICKET_UPDATED
+  TICKET_RESOLVED
+  BROADCAST
+  SAFETY_WARNING
+  MAINTENANCE_ALERT
+}
+
+enum NotificationChannel {
+  IN_APP
+  SMS
+  PUSH
+  EMAIL
+}
+
+// ==================== MODELS ====================
+model User {
+  id String @id @default(cuid())
+  
+  // Auth & Profile
+  email String @unique
+  phone String @unique
+  password String
+  name String
+  avatar String?
+  
+  // Role & Access
+  role UserRole @default(PUBLIC)
+  status UserStatus @default(ACTIVE)
+  permissions Json? // Custom permissions for authorities
+  
+  // Work Assignment (for linemen)
+  zone String?
+  specialization String?
+  currentLocation Json? // {lat, lng, timestamp}
+  isAvailable Boolean @default(true)
+  maxActiveTickets Int @default(3)
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastLogin DateTime?
+  
+  // Relations
+  createdAlerts Alert[] @relation("AlertCreator")
+  assignedTickets Ticket[] @relation("TicketAssignee")
+  createdTickets Ticket[] @relation("TicketCreator")
+  ticketUpdates TicketUpdate[]
+  sentNotifications Notification[] @relation("NotificationSender")
+  receivedNotifications Notification[] @relation("NotificationReceiver")
+  auditLogs AuditLog[]
+  maintenancePlans MaintenancePlan[] @relation("MaintenancePlanAssignee")
+  
+  @@map("users")
+  @@index([role, status])
+  @@index([zone, isAvailable])
+}
+
+model Device {
+  id String @id @default(cuid())
+  
+  // Identity
+  name String
+  deviceId String @unique // Physical device ID
+  type DeviceType
+  model String
+  manufacturer String
+  
+  // Location
+  location String
+  coordinates Json // {lat, lng}
+  zone String
+  poleNumber String?
+  
+  // Status
+  status DeviceStatus @default(ONLINE)
+  lastSeen DateTime?
+  batteryLevel Int?
+  signalStrength Int?
+  
+  // Configuration
+  installationDate DateTime
+  calibrationDate DateTime?
+  calibrationDueDate DateTime?
+  thresholdSettings Json? // Custom alert thresholds
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  alerts Alert[]
+  maintenanceLogs MaintenanceLog[]
+  
+  @@map("devices")
+  @@index([type, status])
+  @@index([zone])
+}
+
+model Alert {
+  id String @id @default(cuid())
+  
+  // Core Information
+  title String
+  description String?
+  severity AlertSeverity
+  status AlertStatus @default(PENDING)
+  
+  // Location
+  location String
+  coordinates Json // {lat, lng}
+  zone String
+  
+  // Source
+  source String // "DEVICE", "PUBLIC_REPORT", "AUTHORITY"
+  automatic Boolean @default(true)
+  confidenceScore Float? // 0-1 confidence level for automatic alerts
+  
+  // Timestamps
+  detectedAt DateTime @default(now())
+  acknowledgedAt DateTime?
+  resolvedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  device Device? @relation(fields: [deviceId], references: [id])
+  deviceId String?
+  createdBy User? @relation("AlertCreator", fields: [createdById], references: [id])
+  createdById String?
+  tickets Ticket[]
+  notifications Notification[]
+  
+  @@map("alerts")
+  @@index([severity, status])
+  @@index([zone, detectedAt])
+  @@index([automatic, confidenceScore])
+}
+
+model Ticket {
+  id String @id @default(cuid())
+  
+  // Core Information
+  title String
+  description String?
+  status TicketStatus @default(PENDING)
+  priority TicketPriority @default(MEDIUM)
+  
+  // Location
+  location String
+  coordinates Json // {lat, lng}
+  zone String
+  
+  // Work Details
+  estimatedDuration Int? // in minutes
+  actualDuration Int?
+  requiredTools String[]
+  requiredParts String[]
+  safetyPrecautions String[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  assignedAt DateTime?
+  startedAt DateTime?
+  resolvedAt DateTime?
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  alert Alert? @relation(fields: [alertId], references: [id])
+  alertId String?
+  createdBy User @relation("TicketCreator", fields: [createdById], references: [id])
+  createdById String
+  assignedTo User? @relation("TicketAssignee", fields: [assignedToId], references: [id])
+  assignedToId String?
+  updates TicketUpdate[]
+  notifications Notification[]
+  
+  @@map("tickets")
+  @@index([status, priority])
+  @@index([assignedToId, createdById])
+  @@index([zone, createdAt])
+}
+
+model TicketUpdate {
+  id String @id @default(cuid())
+  
+  // Content
+  description String
+  status TicketStatus
+  images String[] // S3/image URLs
+  partsUsed String[]
+  hoursWorked Float?
+  
+  // Location
+  coordinates Json? // {lat, lng} where update was made
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  
+  // Relations
+  ticket Ticket @relation(fields: [ticketId], references: [id])
+  ticketId String
+  createdBy User @relation(fields: [createdById], references: [id])
+  createdById String
+  
+  @@map("ticket_updates")
+  @@index([ticketId, createdAt])
+}
+
+model Notification {
+  id String @id @default(cuid())
+  
+  // Content
+  title String
+  message String
+  type NotificationType
+  data Json? // Additional data payload
+  
+  // Delivery
+  channels NotificationChannel[]
+  isRead Boolean @default(false)
+  readAt DateTime?
+  deliveryAttempts Int @default(0)
+  lastAttemptAt DateTime?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  scheduledFor DateTime?
+  expiresAt DateTime?
+  
+  // Relations
+  sender User @relation("NotificationSender", fields: [senderId], references: [id])
+  senderId String
+  receiver User @relation("NotificationReceiver", fields: [receiverId], references: [id])
+  receiverId String
+  alert Alert? @relation(fields: [alertId], references: [id])
+  alertId String?
+  ticket Ticket? @relation(fields: [ticketId], references: [id])
+  ticketId String?
+  
+  @@map("notifications")
+  @@index([receiverId, isRead])
+  @@index([type, createdAt])
+}
+
+model MaintenancePlan {
+  id String @id @default(cuid())
+  
+  // Core Information
+  title String
+  description String?
+  type String // "PREVENTIVE", "CORRECTIVE", "PREDICTIVE"
+  frequency String // "DAILY", "WEEKLY", "MONTHLY", "QUARTERLY", "YEARLY"
+  
+  // Schedule
+  startDate DateTime
+  endDate DateTime?
+  estimatedHours Int
+  actualHours Int?
+  
+  // Status
+  status String // "PENDING", "IN_PROGRESS", "COMPLETED", "CANCELLED"
+  
+  // Location
+  zone String
+  affectedAreas String[]
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  // Relations
+  assignedTo User[] @relation("MaintenancePlanAssignee")
+  devices Device[]
+  logs MaintenanceLog[]
+  
+  @@map("maintenance_plans")
+  @@index([type, status])
+  @@index([zone, startDate])
+}
+
+model MaintenanceLog {
+  id String @id @default(cuid())
+  
+  // Content
+  workDescription String
+  findings String
+  recommendations String
+  partsUsed String[]
+  hoursSpent Float
+  
+  // Media
+  beforeImages String[]
+  afterImages String[]
+  
+  // Timestamps
+  performedAt DateTime @default(now())
+  nextDueDate DateTime?
+  
+  // Relations
+  plan MaintenancePlan @relation(fields: [planId], references: [id])
+  planId String
+  device Device @relation(fields: [deviceId], references: [id])
+  deviceId String
+  performedBy User @relation(fields: [performedById], references: [id])
+  performedById String
+  
+  @@map("maintenance_logs")
+  @@index([planId, deviceId])
+}
+
+model AuditLog {
+  id String @id @default(cuid())
+  
+  // Action Details
+  action String // "CREATE", "UPDATE", "DELETE", "LOGIN", "LOGOUT"
+  entityType String // "User", "Alert", "Ticket", etc.
+  entityId String
+  oldData Json?
+  newData Json?
+  ipAddress String?
+  userAgent String?
+  
+  // Timestamps
+  createdAt DateTime @default(now())
+  
+  // Relations
+  user User @relation(fields: [userId], references: [id])
+  userId String
+  
+  @@map("audit_logs")
+  @@index([entityType, entityId])
+  @@index([userId, createdAt])
+}
+
+model Configuration {
+  id String @id @default(cuid())
+  
+  key String @unique
+  value Json
+  description String?
+  isPublic Boolean @default(false)
+  updatedBy String
+  updatedAt DateTime @updatedAt
+  
+  @@map("configurations")
+}
+
+// ==================== COMPOSITE TYPES ====================
+// (For PostgreSQL native support)
+model WeatherData {
+  id String @id @default(cuid())
+  
+  zone String
+  temperature Float
+  humidity Float
+  windSpeed Float
+  conditions String
+  forecast Json
+  
+  recordedAt DateTime @default(now())
+  
+  @@map("weather_data")
+  @@index([zone, recordedAt])
+}
+
+model AnalyticsSnapshot {
+  id String @id @default(cuid())
+  
+  date DateTime @unique
+  totalAlerts Int
+  resolvedAlerts Int
+  avgResolutionTime Float
+  zoneMetrics Json
+  deviceHealthMetrics Json
+  linemanPerformance Json
+  
+  @@map("analytics_snapshots")
 }
