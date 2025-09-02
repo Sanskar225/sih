@@ -1,17 +1,18 @@
-import { fetchWeather } from '../services/weatherService.js';
-import { prisma } from '../config/prismaClient.js';
+import { fetchWeather } from '../service/weatherService.js';
+import prisma from '../../prisma/client.js';
+import { success, error as errorResponse } from '../utils/responseHelper.js';
+import logger from '../utils/logger.js';
 
 export const getCurrentWeather = async (req, res) => {
     try {
-        const { location } = req.query; 
+        const { location } = req.query;
         if (!location) {
-            return res.status(400).json({ message: "Location query param is required" });
+            return errorResponse(res, "Location query param is required", 400);
         }
 
         const weatherData = await fetchWeather(location);
-
         if (!weatherData) {
-            return res.status(500).json({ message: "Failed to fetch weather data" });
+            return errorResponse(res, "Failed to fetch weather data", 500);
         }
 
         const savedWeather = await prisma.weatherData.create({
@@ -24,13 +25,9 @@ export const getCurrentWeather = async (req, res) => {
             }
         });
 
-        return res.status(200).json({
-            message: "Current weather fetched successfully",
-            data: savedWeather
-        });
-
-    } catch (error) {
-        console.error("Error fetching current weather:", error);
-        return res.status(500).json({ message: "Internal Server Error" });
+        return success(res, savedWeather, "Current weather fetched successfully");
+    } catch (err) {
+        logger.error("Error fetching current weather:", err);
+        return errorResponse(res, "Internal Server Error", 500);
     }
 };
