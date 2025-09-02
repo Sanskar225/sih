@@ -1,0 +1,1 @@
+import { PredictController } from '../controllers/predictController.js';
